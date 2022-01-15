@@ -126,10 +126,16 @@ func (g *Generator) generate() []byte {
 	}
 	g.g.P(")")
 	g.g.P()
+	g.g.P("var (")
+	for _, f := range g.fields {
+		g.g.P(fmt.Sprintf("default%s %s", f.name, f.typ))
+	}
+	g.g.P(")")
+	g.g.P()
 	g.g.P("type base struct{}")
 	g.g.P()
 	for _, f := range g.fields {
-		g.g.P(fmt.Sprintf("func (base) %s() %s { return %s }", f.name, f.typ, f.zero))
+		g.g.P(fmt.Sprintf("func (base) %s() %s { return default%s }", f.name, f.typ, f.name))
 	}
 	g.g.P()
 	g.g.P(fmt.Sprintf("func New() %s {", g.structName))
@@ -183,12 +189,8 @@ func (g *Generator) zero(typ types.Type) string {
 	switch t := typ.(type) {
 	case *types.Basic:
 		g.typNow = t.Name()
-		if g.rec > 1 {
-			return t.Name()
-		}
-		return basic(t)
+		return t.Name()
 	case *types.Named:
-		// TODO: collect package path.
 		name := ""
 		pkg := t.Obj().Pkg()
 		if pkg != nil && pkg.Path() != g.pkg.Path() {
@@ -197,24 +199,15 @@ func (g *Generator) zero(typ types.Type) string {
 		}
 		name += t.Obj().Name()
 		g.typNow = name
-		if g.rec <= 1 {
-			name += "{}"
-		}
 		return name
 	case *types.Array:
 		typ := g.zero(t.Elem())
 		out := fmt.Sprintf("[%d]%s", t.Len(), typ)
 		g.typNow = out
-		if g.rec <= 1 {
-			out += "{}"
-		}
 		return out
 	case *types.Pointer:
 		out := "(*" + g.zero(t.Elem()) + ")"
 		g.typNow = out
-		if g.rec <= 1 {
-			out += "(nil)"
-		}
 		return out
 	case *types.Struct:
 		out := "struct{"
@@ -225,32 +218,20 @@ func (g *Generator) zero(typ types.Type) string {
 		}
 		out += "}"
 		g.typNow = out
-		if g.rec <= 1 {
-			out += "{}"
-		}
 		return out
 	case *types.Signature:
 		out := fmt.Sprintf("func %s %s", g.tuple(t.Params()), g.tuple(t.Results()))
 		g.typNow = out
-		if g.rec <= 1 {
-			out = fmt.Sprintf("(%s)(nil)", out)
-		}
 		return out
 	case *types.Slice:
 		out := "[]" + g.zero(t.Elem())
 		g.typNow = out
-		if g.rec <= 1 {
-			out = fmt.Sprintf("(%s)(nil)", out)
-		}
 		return out
 	case *types.Map:
 		k := g.zero(t.Key())
 		v := g.zero(t.Elem())
 		out := fmt.Sprintf("map[%s]%s", k, v)
 		g.typNow = out
-		if g.rec <= 1 {
-			out = fmt.Sprintf("(%s)(nil)", out)
-		}
 		return out
 	case *types.Interface:
 		out := "interface{"
@@ -265,9 +246,6 @@ func (g *Generator) zero(typ types.Type) string {
 		}
 		out += "}"
 		g.typNow = out
-		if g.rec <= 1 {
-			out = fmt.Sprintf("(%s)(nil)", out)
-		}
 		return out
 	case *types.Chan:
 		out := "chan"
@@ -280,27 +258,10 @@ func (g *Generator) zero(typ types.Type) string {
 		}
 		out += " " + g.zero(t.Elem())
 		g.typNow = out
-		if g.rec <= 1 {
-			out = fmt.Sprintf("(%s)(nil)", out)
-		}
 		return out
 	default:
 	}
 	return "nil"
-}
-
-func basic(typ *types.Basic) string {
-	info := typ.Info()
-	switch {
-	case info&types.IsNumeric != 0:
-		return "0"
-	case info&types.IsString != 0:
-		return `""`
-	case info&types.IsBoolean != 0:
-		return "false"
-	default:
-		return "nil"
-	}
 }
 
 func (g *Generator) _var(v *types.Var) (name string, typ string) {
