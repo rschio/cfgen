@@ -70,10 +70,10 @@ func main() {
 
 	for i := 0; i < strct.NumFields(); i++ {
 		f := strct.Field(i)
+		typ := g.parse(f.Type())
 		field := Field{
 			name: f.Name(),
-			typ:  g.typNow,
-			zero: g.zero(f.Type()),
+			typ:  typ,
 		}
 		g.fields = append(g.fields, field)
 	}
@@ -101,15 +101,12 @@ func (g *GenFile) P(v ...interface{}) {
 type Field struct {
 	name string
 	typ  string
-	zero string
 }
 
 type Generator struct {
 	pkg        *types.Package
 	structName string
 	imports    map[string]*types.Package
-	rec        int // recursion
-	typNow     string
 	fields     []Field
 	g          *GenFile
 }
@@ -183,97 +180,118 @@ func (g *Generator) set() {
 	}
 }
 
-func (g *Generator) zero(typ types.Type) string {
-	g.rec++
-	defer func() { g.rec-- }()
+func (g *Generator) parse(typ types.Type) string {
 	switch t := typ.(type) {
 	case *types.Basic:
-		g.typNow = t.Name()
-		return t.Name()
+		return g.parseBasic(t)
 	case *types.Named:
-		name := ""
-		pkg := t.Obj().Pkg()
-		if pkg != nil && pkg.Path() != g.pkg.Path() {
-			g.imports[pkg.Path()] = pkg
-			name += pkg.Name() + "."
-		}
-		name += t.Obj().Name()
-		g.typNow = name
-		return name
+		return g.parseNamed(t)
 	case *types.Array:
-		typ := g.zero(t.Elem())
-		out := fmt.Sprintf("[%d]%s", t.Len(), typ)
-		g.typNow = out
-		return out
+		return g.parseArray(t)
 	case *types.Pointer:
-		out := "(*" + g.zero(t.Elem()) + ")"
-		g.typNow = out
-		return out
+		return g.parsePointer(t)
 	case *types.Struct:
-		out := "struct{"
-		for i := 0; i < t.NumFields(); i++ {
-			f := t.Field(i)
-			name, typ := g._var(f)
-			out += fmt.Sprintf("%s %s;", name, typ)
-		}
-		out += "}"
-		g.typNow = out
-		return out
+		return g.parseStruct(t)
 	case *types.Signature:
-		out := fmt.Sprintf("func %s %s", g.tuple(t.Params()), g.tuple(t.Results()))
-		g.typNow = out
-		return out
+		return g.parseSignature(t)
 	case *types.Slice:
-		out := "[]" + g.zero(t.Elem())
-		g.typNow = out
-		return out
+		return g.parseSlice(t)
 	case *types.Map:
-		k := g.zero(t.Key())
-		v := g.zero(t.Elem())
-		out := fmt.Sprintf("map[%s]%s", k, v)
-		g.typNow = out
-		return out
+		return g.parseMap(t)
 	case *types.Interface:
-		out := "interface{"
-		for i := 0; i < t.NumEmbeddeds(); i++ {
-			out += g.zero(t.EmbeddedType(i)) + ";"
-		}
-		for i := 0; i < t.NumExplicitMethods(); i++ {
-			m := t.ExplicitMethod(i)
-			typ := g.zero(m.Type())
-			method := m.Name() + typ[len("func"):]
-			out += method + ";"
-		}
-		out += "}"
-		g.typNow = out
-		return out
+		return g.parseInterface(t)
 	case *types.Chan:
-		out := "chan"
-		switch t.Dir() {
-		case types.SendOnly:
-			out += "<-"
-		case types.RecvOnly:
-			out = "<-" + out
-		default:
-		}
-		out += " " + g.zero(t.Elem())
-		g.typNow = out
-		return out
+		return g.parseChan(t)
 	default:
 	}
 	return "nil"
 }
 
-func (g *Generator) _var(v *types.Var) (name string, typ string) {
-	return v.Name(), g.zero(v.Type())
+func (g *Generator) parseBasic(t *types.Basic) string {
+	return t.Name()
+}
+
+func (g *Generator) parseNamed(t *types.Named) string {
+	name := ""
+	pkg := t.Obj().Pkg()
+	if pkg != nil && pkg.Path() != g.pkg.Path() {
+		g.imports[pkg.Path()] = pkg
+		name += pkg.Name() + "."
+	}
+	name += t.Obj().Name()
+	return name
+}
+
+func (g *Generator) parseArray(t *types.Array) string {
+	typ := g.parse(t.Elem())
+	return fmt.Sprintf("[%d]%s", t.Len(), typ)
+}
+
+func (g *Generator) parsePointer(t *types.Pointer) string {
+	return "*" + g.parse(t.Elem())
+}
+
+func (g *Generator) parseStruct(t *types.Struct) string {
+	out := "struct{"
+	for i := 0; i < t.NumFields(); i++ {
+		f := t.Field(i)
+		name, typ := f.Name(), g.parse(f.Type())
+		out += fmt.Sprintf("%s %s;", name, typ)
+	}
+	out += "}"
+	return out
+}
+
+func (g *Generator) parseSignature(t *types.Signature) string {
+	params := g.tuple(t.Params())
+	results := g.tuple(t.Results())
+	return fmt.Sprintf("func %s %s", params, results)
+}
+
+func (g *Generator) parseSlice(t *types.Slice) string {
+	return "[]" + g.parse(t.Elem())
+}
+
+func (g *Generator) parseMap(t *types.Map) string {
+	k := g.parse(t.Key())
+	v := g.parse(t.Elem())
+	return fmt.Sprintf("map[%s]%s", k, v)
+}
+
+func (g *Generator) parseInterface(t *types.Interface) string {
+	out := "interface{"
+	for i := 0; i < t.NumEmbeddeds(); i++ {
+		out += g.parse(t.EmbeddedType(i)) + ";"
+	}
+	for i := 0; i < t.NumExplicitMethods(); i++ {
+		m := t.ExplicitMethod(i)
+		typ := g.parse(m.Type())
+		method := m.Name() + typ[len("func"):]
+		out += method + ";"
+	}
+	out += "}"
+	return out
+}
+
+func (g *Generator) parseChan(t *types.Chan) string {
+	out := "chan"
+	switch t.Dir() {
+	case types.SendOnly:
+		out += "<-"
+	case types.RecvOnly:
+		out = "<-" + out
+	default:
+	}
+	out += " " + g.parse(t.Elem())
+	return out
 }
 
 func (g *Generator) tuple(t *types.Tuple) string {
 	out := "("
 	for i := 0; i < t.Len(); i++ {
 		f := t.At(i)
-		n, typ := g._var(f)
-		out += fmt.Sprintf("%s %s,", n, typ)
+		name, typ := f.Name(), g.parse(f.Type())
+		out += fmt.Sprintf("%s %s,", name, typ)
 	}
 	out += ")"
 	return out
